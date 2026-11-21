@@ -33,7 +33,7 @@
   ],
   "pi": {
     "extensions": [
-      "./src/index.ts"
+      "./src/pi-ko-sanitizer.ts"
     ]
   },
   "scripts": {

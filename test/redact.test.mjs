@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findingRecord, redact } from "../src/index.ts";
+import { findingRecord, redact } from "../src/pi-ko-sanitizer.ts";
 
 // Construct invalid credential-shaped inputs, not copies of any actual values.
 const dummy = "fake".repeat(10);

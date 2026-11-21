@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { askedSpans, processText, sanitize } from "../src/sanitize.ts";
+import { askedSpans, candidates, processText, sanitize } from "../src/sanitize.ts";
 
 for (const [name, input, expected, count] of [
   ["mixed stems", "표를 調사하고 조査 결과를 정리했습니다.", "표를 조사하고 조査 결과를 정리했습니다.", 1],
@@ -16,6 +16,18 @@ for (const [name, input, expected, count] of [
     assert.deepEqual(sanitize(input), { text: expected, count });
   });
 }
+
+test("a Han word glued to a Hangul noun is read from the word table", () => {
+  assert.deepEqual(sanitize("이 파일은 파일改名 합니다."), { text: "이 파일은 파일개명 합니다.", count: 1 });
+  // A spaced span still needs context, a gloss keeps its Hanja, and an
+  // ambiguous word stays a finding.
+  const spaced = "이 파일은 改名 합니다.";
+  assert.deepEqual(sanitize(spaced), { text: spaced, count: 0 });
+  assert.deepEqual(candidates(spaced), ["改名"]);
+  for (const text of ["개명(改名) 했습니다.", "표의 行列을 확인합니다."]) {
+    assert.deepEqual(sanitize(text), { text, count: 0 });
+  }
+});
 
 test("a word with two plausible readings is left alone", () => {
   const text = "표의 行렬과 行列을 확인합니다.";

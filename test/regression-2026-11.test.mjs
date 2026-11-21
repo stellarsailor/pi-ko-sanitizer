@@ -31,11 +31,12 @@ test("a Han-heavy line is preserved and marked as foreign prose", () => {
 });
 
 test("unknown spans are not rewritten by the dictionary", () => {
-  const text = "새 용어固化를 표에 추가했습니다.";
+  // 造字 is in neither the character map nor the 236k word table.
+  const text = "새 용어造字를 표에 추가했습니다.";
   const result = processText(text);
   assert.equal(result.text, text);
   assert.deepEqual(diagnose(text), result.findings);
-  assert.deepEqual(candidates(text), ["固化"]);
+  assert.deepEqual(candidates(text), ["造字"]);
 });
 
 test("unknown spans next to digits and Latin are candidates", () => {

@@ -418,7 +418,15 @@ export function processText(text: string, options: ProcessOptions = {}): Process
         continue;
       }
       const m = isJapanese ? JA : ZH;
-      const korean = cover(run, m);
+      // The character map reads single Han characters, so a Han word glued to a
+      // Hangul noun (파일改名) has to come from the 236k word table before it is
+      // a finding. A spaced span still needs context, and cited names
+      // (青石·白霧·長風) stay out of reach.
+      const korean =
+        cover(run, m) ??
+        (isJapanese || !HANGUL.test(prev) || cited(line, at, run.length)
+          ? null
+          : readMixedHanja(run)?.reading ?? null);
       if (!korean) {
         // Attached spans are the leak signature. Spaced spans are reported too,
         // under their own kind, because 造字를 is a leak while 北京市처럼 is a name

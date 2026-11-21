@@ -51,7 +51,7 @@ function loadHeadings() {
 
 // shortcut: recognize common complete particles and verbal endings; extend with verified cases.
 const SUFFIX = /^(?:[이가을를은는의에도만와과께로]|에게서?|에서는?|으로|까지|부터|처럼|보다|라서|이라|입니다|이다|이고|이라면|하다|합니다|하세요|하고|하면|하는|한|할|해|해서|했다|했습니다|되다|됩니다|되고|되면|되는|된|될|됐다|됐습니다)?$/u;
-const HANGUL = /[가-힣]/u;
+const BARE_HAN = /[가-힣\p{Script=Han}]/u;
 const KANA = /[\u3041-\u30fa]/u;
 
 /**
@@ -64,7 +64,9 @@ const KANA = /[\u3041-\u30fa]/u;
  */
 export function readMixedHanja(token: string): { source: string; reading: string } | undefined {
   const chars = [...token.normalize("NFC")].map((char) => char.normalize("NFKC"));
-  if (!HANGUL.test(chars.join(""))) return undefined;
+  // A bare Han word (파일改名, 改名 후) is a candidate too: what makes a reading
+  // safe is the single-surviving-reading rule below, not Hangul in the token.
+  if (!BARE_HAN.test(chars.join(""))) return undefined;
   loadHanja();
   const candidates = BY_FIRST.get(chars[0]);
   if (!candidates) return undefined;
