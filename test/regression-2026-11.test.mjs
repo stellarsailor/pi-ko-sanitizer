@@ -69,6 +69,79 @@ test("code, URLs, and kana quotations keep their original bytes", () => {
   assert.equal(sanitize(text).text, text);
 });
 
+for (const [name, fragment] of [
+  ["double-backtick code spans", "예제: ``const `x` = 使用`` 입니다."],
+  ["multiline code spans", "예제: ``const `x` =\n使用`` 입니다."],
+  ["closed fences in block quotes", "예제입니다.\n> ```js\n> const 使用 = 1\n> ```"],
+  ["code fences that end at EOF", "예제입니다.\n```js\nconst 使用 = 1"],
+  ["tilde fences that end at EOF", "예제입니다.\n~~~js\nconst 使用 = 1"],
+  ["URLs with uppercase schemes", "주소는 HTTPS://example.test/使用 입니다."],
+  ["URLs with nested parentheses", "주소는 https://example.test/a(b(c)d)/使用 입니다."],
+]) {
+  test(`${name} stay unchanged in both correction passes`, () => {
+    const text = `설명에 使用 예가 있습니다.\n${fragment}`;
+    const expected = `설명에 사용 예가 있습니다.\n${fragment}`;
+    assert.deepEqual(sanitize(text), { text: expected, count: 1 });
+    const edited = applyEdits(text, [{ span: "使用", reading: "사용" }], protectedMask(text));
+    assert.equal(edited.text, expected);
+    assert.equal(edited.count, 1);
+  });
+}
+
+test("a short fence does not close a longer fence and correction resumes after the real close", () => {
+  const fence = "````js\r\nconst 使用 = 1;\r\n```\r\nconst 使用 = 2;\r\n`````";
+  const text = `예제입니다.\r\n${fence}\r\n아래 설명에 使用 예가 있습니다.`;
+  const expected = `예제입니다.\r\n${fence}\r\n아래 설명에 사용 예가 있습니다.`;
+  assert.deepEqual(sanitize(text), { text: expected, count: 1 });
+});
+
+test("unmatched backticks do not protect prose in a different paragraph", () => {
+  const text = "예시의 ` 기호입니다.\n\n다른 문단에서는 使用 예를 봅니다. `";
+  assert.deepEqual(sanitize(text), { text: "예시의 ` 기호입니다.\n\n다른 문단에서는 사용 예를 봅니다. `", count: 1 });
+});
+
+test("a Markdown link's closing parenthesis is not included in the URL", () => {
+  const url = "https://example.test/(guide)/使用";
+  const text = `[링크](${url}) 옆에 使用 예가 있습니다.`;
+  const mask = protectedMask(text);
+  assert.equal(mask(text.indexOf(url), url.length), true);
+  assert.equal(mask(text.indexOf(url) + url.length, 1), false);
+  assert.deepEqual(sanitize(text), { text: `[링크](${url}) 옆에 사용 예가 있습니다.`, count: 1 });
+});
+
+for (const [name, input, expected] of [
+  ["an inline label", "きっかけ: ① 작은 변화가 결과에 영향을 줬습니다.", "계기: ① 작은 변화가 결과에 영향을 줬습니다."],
+  ["a bold label with its colon inside", "**きっかけ:** 작은 변화가 있었습니다.", "**계기:** 작은 변화가 있었습니다."],
+  ["a list label with a full-width colon", "- **まとめ**： 결과를 확인했습니다.", "- **요약**： 결과를 확인했습니다."],
+  ["a Markdown heading above a Korean paragraph", "## まとめ\r\n\r\n값을 확인했습니다.", "## 요약\r\n\r\n값을 확인했습니다."],
+  ["a colon label on its own line", "きっかけ:\n- 이전 값과 비교했습니다.", "계기:\n- 이전 값과 비교했습니다."],
+]) {
+  test(`corrects ${name} without changing its formatting`, () => {
+    assert.deepEqual(sanitize(input), { text: expected, count: 1 });
+  });
+}
+
+test("Japanese labels outside Korean sections stay untouched", () => {
+  for (const text of [
+    "한국어 소개입니다.\n## きっかけ\nこれは日本語の本文です。",
+    "한국어 인사입니다.\n## きっかけ\n## 별개 제목\n다음 본문입니다.",
+    "きっかけ: これは日本語です。\n한국어 참고입니다.",
+    "설명에서 きっかけ: 표기를 인용합니다.",
+    "설명에서 `example`きっかけ: 표기를 인용합니다.",
+    "한국어 안내입니다.\n> きっかけ: 예시로 인용했습니다.",
+    "한국어 안내입니다.\n```text\nきっかけ: 코드 예시입니다.\n```",
+    "한국어 안내입니다.\nきっかけ:",
+    "소제목 예시: 'きっかけ: 정해진 문장입니다.'",
+  ]) {
+    assert.deepEqual(sanitize(text), { text, count: 0 });
+  }
+});
+
+test("a Japanese label is protected when it is the subject of the question", () => {
+  const text = "きっかけ: 앞에 붙인 일본어 표기입니다.";
+  assert.equal(processText(text, { protect: askedSpans("きっかけ라는 표현은 어떤 뜻인가요?") }).text, text);
+});
+
 test("a model edit does not touch a repeated span on a Japanese line", () => {
   const text = "화면에 固化 항목이 있습니다.\nこれは固化です。";
   const edited = applyEdits(text, [{ span: "固化", reading: "고정" }], protectedMask(text));
@@ -84,6 +157,19 @@ test("long inputs protect only explicitly delimited terms", () => {
   const protect = askedSpans(`사용 예시입니다. `.repeat(60) + "確認 `使用`");
   assert.equal(protect("使用"), true);
   assert.equal(protect("確認"), false);
+});
+
+test("a dictionary reading or an adverb is not treated as a heading", () => {
+  for (const label of ["ようやく", "むしろ", "とうとう", "たしかに"]) {
+    const text = `${label}: 우리말 본문입니다.`;
+    assert.deepEqual(sanitize(text), { text, count: 0 });
+  }
+});
+
+test("other headings from the dictionary still convert", () => {
+  for (const [label, reading] of [["はじめに", "머리말"], ["ポイント", "포인트"], ["メーター", "미터기"]]) {
+    assert.equal(sanitize(`${label}: 우리말 본문입니다.`).text, `${reading}: 우리말 본문입니다.`);
+  }
 });
 
 test("Japanese lexicon keys are distinct and include kana", () => {

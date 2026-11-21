@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3 - 2026-11-21
+
+- Restore verified mixed Hanja–Hangul words with word-initial and batchim-sensitive pronunciation rules.
+- Replace the hand-written Hanja list with a 236k-word table, so mixed Hanja–Hangul words and Hanja words with Korean particles are read across the dictionary instead of a fixed list.
+- Replace the fixed Japanese heading list with a 7.6k noun-pair table built from dictionary equivalents. Ties, kanji readings used as kana, and words that also translate a Korean adverb are left out.
+- Protect code spans with matching backtick runs and fenced blocks that extend to the end of a reply.
+- Preserve HTTP and HTTPS URLs with mixed-case schemes or balanced parentheses in both correction modes.
+
 ## 0.1.2
 
 - Use synthetic test inputs rather than recorded prompts and model replies.

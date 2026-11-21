@@ -1,17 +1,62 @@
+import { readJapaneseHeading, readMixedHanja } from "./hanja.ts";
 import { LEXICON, JAPANESE_LEAKS, KANA_READINGS } from "./lexicon.ts";
 
 const KANA = /[\u3040-\u30ff]/u;
 const HANGUL = /[가-힣]/u;
 const KANA_ALL = /[\u3040-\u30ff]/gu;
 const HANGUL_ALL = /[가-힣]/gu;
-// Code fences, inline code and URLs keep their bytes. File paths are not
-// handled here: a path with a Chinese name is rare and protecting every
-// slash-prefixed token costs more than it saves.
-const PROTECTED = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|https?:\/\/[^\s<>)}]+/g;
+// shortcut: no Markdown container state; use a parser for fences nested in lists or block quotes.
+const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})([^\r\n]*)/gm;
+const INLINE_OR_URL = /(?<!`)(`+)(?!`)(?:(?!\r?\n[ \t]*\r?\n)[\s\S])*?(?<!`)\1(?!`)|https?:\/\/[^\s<>}"`]+/gi;
+
+function* inlineRanges(text: string, offset: number): Generator<[number, number]> {
+  const pattern = new RegExp(INLINE_OR_URL);
+  for (let match; (match = pattern.exec(text)); ) {
+    let end = pattern.lastIndex;
+    if (!match[1]) {
+      let depth = 0;
+      // Parentheses inside the destination are literal; an unmatched close ends a Markdown link.
+      for (let at = match.index; at < end; at++) {
+        if (text[at] === "(") depth++;
+        else if (text[at] === ")") {
+          if (depth === 0) {
+            end = at;
+            break;
+          }
+          depth--;
+        }
+      }
+      pattern.lastIndex = end;
+    }
+    yield [offset + match.index, offset + end];
+  }
+}
+
+function* protectedRanges(text: string): Generator<[number, number]> {
+  let cursor = 0;
+  let open: { start: number; marker: string } | undefined;
+  for (const match of text.matchAll(FENCE_LINE)) {
+    const start = match.index ?? 0;
+    const [, marker, rest] = match;
+    if (open) {
+      if (!marker.startsWith(open.marker) || rest.trim() !== "") continue;
+      cursor = start + match[0].length;
+      yield [open.start, cursor];
+      open = undefined;
+    } else if (marker[0] === "~" || !rest.includes("`")) {
+      yield* inlineRanges(text.slice(cursor, start), cursor);
+      open = { start, marker };
+    }
+  }
+  if (open) yield [open.start, text.length];
+  else yield* inlineRanges(text.slice(cursor), cursor);
+}
 // One contiguous CJK span: Han, hiragana or katakana, in any mix. A span that
 // carries kana is a Japanese span, so Han inside it is never treated as Chinese.
 const CJK_RUN = /[\p{Script=Han}\u3040-\u30ff]+/gu;
 const CJK_ALL = /[\p{Script=Han}\u3040-\u30ff]/gu;
+const HAN_TOKEN = /(?<![\p{L}\p{N}_/\\])[가-힣]*\p{Script=Han}[\p{Script=Han}가-힣]*(?![\p{L}\p{N}_/\\])/gu;
+const OPEN = /[([{<〔「『]/u;
 // 개항(開港): Han inside brackets right after Hangul is a Hanja gloss, not a leak.
 const GLOSS_BEFORE = /[가-힣][([{<〔「『]/u;
 const CLOSE = /[)\]}>〕」』]/u;
@@ -220,6 +265,21 @@ function isJapaneseLine(line: string): boolean {
   return kana / (kana + hangul) >= JA_DENSITY;
 }
 
+const LABEL = /^( {0,3}(#{1,6}[ \t]+|[-+*][ \t]+)?(?:\*\*|__)?)([\p{Script=Han}\u3040-\u30ff]+)(?:\*\*|__)?([ \t]*[:：](?:\*\*|__)?)?/u;
+
+function japaneseHeading(line: string, nextLine: string) {
+  const match = LABEL.exec(line);
+  if (!match) return;
+  const [matched, prefix, marker, label, colon] = match;
+  const reading = readJapaneseHeading(label);
+  if (!reading) return;
+  const rest = line.slice(matched.length).trim();
+  if (!colon && (!marker?.startsWith("#") || !/^#*$/.test(rest))) return;
+  const body = (colon && rest) || nextLine;
+  if (/^ {0,3}(?:#{1,6}[ \t]+|>)/u.test(body) || !/[가-힣]{2}/u.test(body) || KANA.test(body)) return;
+  return { at: prefix.length, label, reading };
+}
+
 /**
  * Replace leaked Chinese and Japanese in Korean replies.
  *
@@ -249,7 +309,14 @@ export function processText(text: string, options: ProcessOptions = {}): Process
   const distinct = new Set<string>();
   let count = 0;
 
-  const passLine = (line: string): string => {
+  const passLine = (line: string, nextLine?: string): string => {
+    const heading = nextLine === undefined ? undefined : japaneseHeading(line, nextLine);
+    if (heading && !protect?.(heading.label)) {
+      const { at, label, reading } = heading;
+      line = line.slice(0, at) + reading + line.slice(at + label.length);
+      distinct.add(label);
+      count++;
+    }
     // Japanese original or quotation: the line reads as Japanese.
     if (isJapaneseLine(line)) return line;
     // A line that is mostly Han is translated text the user asked to keep, not a
@@ -266,6 +333,29 @@ export function processText(text: string, options: ProcessOptions = {}): Process
       flag("foreign-line", line, "mostly Han line, treated as translation");
       return line;
     }
+    const original = line;
+    line = original.replace(HAN_TOKEN, (token: string, at: number) => {
+      if (!HANGUL.test(token)) return token;
+      const reading = readMixedHanja(token);
+      if (!reading) return token;
+      // The curated translation wins over a character-by-character reading.
+      const hanPrefix = /^\p{Script=Han}+/u.exec(token)?.[0] ?? "";
+      if (hanPrefix && cover(hanPrefix, ZH)) return token;
+      const end = at + token.length;
+      if (OPEN.test(original[at - 1] ?? "") && CLOSE.test(original[end] ?? "")) return token;
+      if (cited(original, at, token.length)) return token;
+      for (const quote of original.matchAll(QUOTED)) {
+        const start = quote.index ?? 0;
+        if (at >= start && end <= start + quote[0].length) return token;
+      }
+      const spelled = token.slice(0, reading.source.length);
+      if (protect?.(token) || protect?.(reading.source) || protect?.(spelled)) return token;
+      if (protect && [...reading.source.matchAll(CJK_RUN)].some(([span]) => protect(span))) return token;
+      distinct.add(reading.reading);
+      count++;
+      return reading.reading + token.slice(reading.source.length);
+    });
+
     let out = "";
     let last = 0;
     const quotes = japaneseQuotes(line);
@@ -333,14 +423,21 @@ export function processText(text: string, options: ProcessOptions = {}): Process
     return out + line.slice(last);
   };
 
+  const passPlain = (start: number, end: number): string =>
+    text.slice(start, end).split("\n").map((line, index, lines) => {
+      // A slice after inline code or a URL can start halfway through a real line.
+      if (index === 0 && start > 0 && text[start - 1] !== "\n") return passLine(line);
+      const next = lines[index + 1];
+      return passLine(line, (next?.trim() ? next : lines[index + 2]) ?? "");
+    }).join("\n");
+
   let out = "";
   let last = 0;
-  for (const match of text.matchAll(PROTECTED)) {
-    const at = match.index ?? 0;
-    out += text.slice(last, at).split("\n").map(passLine).join("\n") + match[0];
-    last = at + match[0].length;
+  for (const [start, end] of protectedRanges(text)) {
+    out += passPlain(last, start) + text.slice(start, end);
+    last = end;
   }
-  out += text.slice(last).split("\n").map(passLine).join("\n");
+  out += passPlain(last, text.length);
 
   // shortcut: many distinct dictionary words suggest a translation; revisit
   // this heuristic if it suppresses changes in ordinary mixed-language replies.
@@ -389,12 +486,8 @@ export function askedSpans(message: string): (span: string) => boolean {
  * every occurrence without this guard rewrote the quotation.
  */
 export function protectedMask(text: string): (offset: number, length: number) => boolean {
-  const ranges: Array<[number, number]> = [];
-  for (const m of text.matchAll(PROTECTED)) {
-    const at = m.index ?? 0;
-    ranges.push([at, at + m[0].length]);
-  }
-  for (const m of text.matchAll(/"[^"\n]*"|“[^”\n]*”|「[^」\n]*」|『[^』\n]*』/gu)) {
+  const ranges = [...protectedRanges(text)];
+  for (const m of text.matchAll(QUOTED)) {
     if (!KANA.test(m[0])) continue;
     const at = m.index ?? 0;
     ranges.push([at, at + m[0].length]);

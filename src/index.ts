@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { preloadWordTables } from "./hanja.ts";
 import { processText, candidates, askedSpans, protectedMask, type Finding } from "./sanitize.ts";
 import { rewriteReply } from "./rewrite.ts";
 
@@ -131,6 +132,8 @@ async function rewritePart(
 }
 
 export default function (pi: ExtensionAPI) {
+  // The tables cost about 250 ms to build; pay it while Pi finishes starting.
+  setImmediate(preloadWordTables);
   let replaced = 0;
   let flagged = 0;
   let rewritten = 0;
