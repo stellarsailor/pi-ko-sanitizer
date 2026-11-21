@@ -8,6 +8,7 @@
 - Keep Hanja word readings out of the translated-passage cap, so a reply quoting many Hanja words keeps its corrections.
 - Read quoted Hanja terms in Korean prose, while a Hanja gloss such as 개항(開港) and a Japanese quotation stay untouched.
 - Drop an oversized provider answer before parsing, and remove quadratic regex scans that a long Han paragraph could trigger.
+- Read a bare Han word glued to a Hangul noun (파일改名) from the word table, while a spaced word still waits for context.
 - Protect code spans with matching backtick runs and fenced blocks that extend to the end of a reply.
 - Preserve HTTP and HTTPS URLs with mixed-case schemes or balanced parentheses in both correction modes.
 
