@@ -1,8 +1,9 @@
 import { readJapaneseHeading, readMixedHanja } from "./hanja.ts";
-import { LEXICON, JAPANESE_LEAKS, KANA_READINGS } from "./lexicon.ts";
+import { LEXICON, JAPANESE_LEAKS, KANA_READINGS, SHINJITAI } from "./lexicon.ts";
 
 const KANA = /[\u3040-\u30ff]/u;
 const HANGUL = /[가-힣]/u;
+const HAN = /\p{Script=Han}/u;
 const KANA_ALL = /[\u3040-\u30ff]/gu;
 const HANGUL_ALL = /[가-힣]/gu;
 // shortcut: no Markdown container state; use a parser for fences nested in lists or block quotes.
@@ -93,6 +94,10 @@ function matcher(entries: ReadonlyArray<readonly [string, string]>): Matcher {
 const ZH = matcher(LEXICON);
 const JA = matcher(JAPANESE_LEAKS);
 const KANA_MAP = new Map(KANA_READINGS);
+const SHINJITAI_MAP = new Map(SHINJITAI);
+// One character class for the whole table, built once. Every key is a Han
+// character, so none needs escaping inside the class.
+const SHINJITAI_ANY = new RegExp(`[${[...SHINJITAI_MAP.keys()].join("")}]`, "u");
 
 // Japanese particles and endings that must never be read as a name tail: after a
 // Korean word they are the sentence, not a truncated name.
@@ -195,6 +200,24 @@ function cover(run: string, m: Matcher): string | null {
   return out;
 }
 
+/**
+ * Read a span that carries Japanese-only character forms: 変化 is in no Korean
+ * table because a Korean writer types 변화 or 變化. Mapping the characters to the
+ * form the bundled word table holds and reading that keeps a single rule for
+ * every span: a word we cannot read uniquely is reported, never guessed.
+ */
+export function readShinjitai(run: string): string | null {
+  let han = "";
+  let mapped = false;
+  for (const char of run) {
+    const korean = SHINJITAI_MAP.get(char);
+    if (korean) mapped = true;
+    han += korean ?? char;
+  }
+  if (!mapped) return null;
+  return cover(han, ZH) ?? readMixedHanja(han)?.reading ?? null;
+}
+
 // Swapping words swaps the final consonant, so the particle that follows can
 // end up wrong: 修改가 becomes 수정가 instead of 수정이. Only the single-syllable
 // particles are repaired; 로/으로 needs two syllables and is not worth the code.
@@ -210,7 +233,7 @@ export function fixParticle(word: string, next: string): string | null {
 
 /** A leak site we detected but deliberately did not rewrite. */
 export interface Finding {
-  kind: "zh-unknown" | "ja-unknown" | "zh-spaced" | "cap-trip" | "foreign-line";
+  kind: "zh-unknown" | "ja-unknown" | "ja-shinjitai" | "ja-kana" | "zh-spaced" | "cap-trip" | "foreign-line";
   text: string;
   why: string;
 }
@@ -254,7 +277,7 @@ function cited(line: string, at: number, len: number): boolean {
 /** Spans the dictionary could not read, for a sentence-level rewrite step. */
 export function candidates(text: string): string[] {
   return processText(text).findings
-    .filter((f) => f.kind === "zh-unknown" || f.kind === "ja-unknown" || f.kind === "zh-spaced")
+    .filter((f) => UNREADABLE.has(f.kind))
     .map((f) => f.text);
 }
 
@@ -268,6 +291,10 @@ export interface SanitizeResult {
   text: string;
   count: number;
 }
+
+// Kinds a sentence-level rewrite can still read: the dictionary saw the span and
+// did not know it.
+const UNREADABLE = new Set<Finding["kind"]>(["zh-unknown", "ja-unknown", "ja-shinjitai", "ja-kana", "zh-spaced"]);
 
 const MAX_FINDINGS = 20;
 const clip = (text: string) => (text.length > 40 ? `${text.slice(0, 40)}…` : text);
@@ -418,12 +445,16 @@ export function processText(text: string, options: ProcessOptions = {}): Process
         continue;
       }
       const m = isJapanese ? JA : ZH;
+      // Japanese-only character forms are a leak wherever they appear, attached
+      // or spaced, so they are reported under their own kind below.
+      const shinjitai = SHINJITAI_ANY.test(run);
       // The character map reads single Han characters, so a Han word glued to a
       // Hangul noun (파일改名) has to come from the 236k word table before it is
       // a finding. A spaced span still needs context, and cited names
       // (青石·白霧·長風) stay out of reach.
       const korean =
         cover(run, m) ??
+        readShinjitai(run) ??
         (isJapanese || !HANGUL.test(prev) || cited(line, at, run.length)
           ? null
           : readMixedHanja(run)?.reading ?? null);
@@ -432,9 +463,14 @@ export function processText(text: string, options: ProcessOptions = {}): Process
         // under their own kind, because 造字를 is a leak while 北京市처럼 is a name
         // and only context can tell them apart: the rewrite step decides, and a
         // caller that ignores `zh-spaced` sees exactly the old behaviour.
-        if (attached) {
-          flag(isJapanese ? "ja-unknown" : "zh-unknown", run,
-            isJapanese ? "Japanese leak, no dictionary reading" : "Han leak, no dictionary reading");
+        if (attached || shinjitai) {
+          flag(shinjitai ? "ja-shinjitai" : isJapanese ? "ja-unknown" : "zh-unknown", run,
+            shinjitai ? "Japanese shinjitai, no word-table reading"
+              : isJapanese ? "Japanese leak, no dictionary reading" : "Han leak, no dictionary reading");
+        } else if (isJapanese && !HAN.test(run)) {
+          // Kana alone is never Korean: no reading here, so the span is reported
+          // for the rewrite step instead of vanishing from the count.
+          flag("ja-kana", run, "kana run, no dictionary reading");
         } else if (!isJapanese && run.length >= 2 && run.length <= 4 && !cited(line, at, run.length)) {
           flag("zh-spaced", run, "spaced Han span, needs context");
         }

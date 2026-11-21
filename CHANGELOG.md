@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4 - 2026-11-21
+
+- Read Japanese-only character forms through the Korean word table: 変化 becomes 변화 instead of staying as a leak. the shinjitai map to the form the bundled table holds, and a wrong pair cannot produce a wrong word because the table still has to read it uniquely.
+- Report such a span as `ja-shinjitai` rather than `zh-unknown` when the table cannot read it.
+- Report a kana run with no dictionary reading as `ja-kana`. It used to be dropped from both the reply pass and the counter, so `/zh-ko` under-reported Japanese leaks.
+- Offer both new kinds to the model correction step.
+
 ## 0.1.3 - 2026-11-21
 
 - Restore verified mixed Hanja–Hangul words with word-initial and batchim-sensitive pronunciation rules.
