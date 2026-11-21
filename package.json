@@ -1,0 +1,51 @@
+{
+  "name": "pi-ko-sanitizer",
+  "version": "0.1.2",
+  "description": "Replace leaked Chinese and Japanese in Korean replies with natural Korean. Deterministic dictionary by default, optional model rewrite.",
+  "license": "MIT",
+  "author": "stellarsailor",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stellarsailor/pi-ko-sanitizer.git"
+  },
+  "homepage": "https://github.com/stellarsailor/pi-ko-sanitizer#readme",
+  "bugs": {
+    "url": "https://github.com/stellarsailor/pi-ko-sanitizer/issues"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "keywords": [
+    "pi-package",
+    "korean",
+    "chinese",
+    "sanitizer",
+    "code-switching",
+    "local-llm"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "README-ko.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test 'test/*.test.mjs'",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^26.6.6",
+    "typescript": "^5.9.3"
+  }
+}
