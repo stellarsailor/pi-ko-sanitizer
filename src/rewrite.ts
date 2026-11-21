@@ -65,7 +65,11 @@ export function buildPrompt(text: string, spans: string[]): string {
  * quote or a prompt echo, and taking the first bracket silently parsed that one
  * and rejected every edit.
  */
+const MAX_ANSWER = 256 * 1024;
+
 export function parseEdits(raw: string, allowed: string[]): Edit[] {
+  // A runaway provider answer must not spend the reply's budget in the parser.
+  if (raw.length > MAX_ANSWER) return [];
   const starts: number[] = [];
   for (let i = raw.indexOf("["); i >= 0; i = raw.indexOf("[", i + 1)) starts.push(i);
   let parsed: unknown;
@@ -272,6 +276,7 @@ export function buildVerifyPrompt(text: string, edits: Edit[]): string {
 
 /** Spans the verifier explicitly approved. Everything else is reverted. */
 export function parseKeep(raw: string, spans: string[]): Set<string> {
+  if (raw.length > MAX_ANSWER) return new Set();
   const starts: number[] = [];
   for (let i = raw.indexOf("["); i >= 0; i = raw.indexOf("[", i + 1)) starts.push(i);
   const allowed = new Set(spans);

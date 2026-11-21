@@ -28,6 +28,13 @@ test("spans the model invents are dropped", () => {
   assert.deepEqual(parseEdits(raw, ["造字"]).map((e) => e.span), ["造字"]);
 });
 
+test("a runaway provider answer is dropped instead of parsed", () => {
+  const huge = "[".repeat(300_000);
+  const started = Date.now();
+  assert.deepEqual(parseEdits(huge, ["造字"]), []);
+  assert.ok(Date.now() - started < 100, "parser scanned an oversized answer");
+});
+
 test("a fenced or chatty answer is rejected without throwing", () => {
   assert.deepEqual(parseEdits("no json here", ["造字"]), []);
   assert.deepEqual(parseEdits("[{broken", ["造字"]), []);

@@ -55,8 +55,10 @@ function* protectedRanges(text: string): Generator<[number, number]> {
 // carries kana is a Japanese span, so Han inside it is never treated as Chinese.
 const CJK_RUN = /[\p{Script=Han}\u3040-\u30ff]+/gu;
 const CJK_ALL = /[\p{Script=Han}\u3040-\u30ff]/gu;
-const HAN_TOKEN = /(?<![\p{L}\p{N}_/\\])[가-힣]*\p{Script=Han}[\p{Script=Han}가-힣]*(?![\p{L}\p{N}_/\\])/gu;
-const OPEN = /[([{<〔「『]/u;
+// No trailing lookahead: on a long Han run it made the engine backtrack over every
+// prefix. The end of the match is checked in the replacement instead.
+const HAN_TOKEN = /(?<![\p{L}\p{N}_/\\])\p{Script=Han}[\p{Script=Han}가-힣]*/gu;
+const WORD_CHAR = /[\p{L}\p{N}_/\\]/u;
 // 개항(開港): Han inside brackets right after Hangul is a Hanja gloss, not a leak.
 const GLOSS_BEFORE = /[가-힣][([{<〔「『]/u;
 const CLOSE = /[)\]}>〕」』]/u;
@@ -221,7 +223,25 @@ const POSTPOS = /^(?:처럼|보다|마다|조차|마저|부터|까지|이나|이
 // Latin characters and digits also count as attachment points for a leak.
 const GLUE = /[가-힣A-Za-z0-9]/u;
 
-const CITED_RUN = /[\p{Script=Han}]+(?:[·・][\p{Script=Han}]+)+/gu;
+const MIDDLE_DOT = /[·・]/u;
+const ALL_HAN = /^\s*\p{Script=Han}+\s*$/u;
+
+/**
+ * Han characters that belong to a middle-dot citation list such as 北京·上海.
+ * Splitting on whitespace keeps this linear, where matching Han runs back to back
+ * over a long Han paragraph was quadratic.
+ */
+function citedHanCount(line: string): number {
+  if (!MIDDLE_DOT.test(line)) return 0;
+  let total = 0;
+  for (const word of line.split(/\s+/)) {
+    if (!MIDDLE_DOT.test(word)) continue;
+    for (const part of word.split(MIDDLE_DOT)) {
+      if (ALL_HAN.test(part)) total += part.trim().length;
+    }
+  }
+  return total;
+}
 
 // A citation list (北京市·上海市·深圳市) is names, not leaks: skip a span that is
 // joined to its neighbour by a middle dot or sits inside one.
@@ -265,7 +285,7 @@ function isJapaneseLine(line: string): boolean {
   return kana / (kana + hangul) >= JA_DENSITY;
 }
 
-const LABEL = /^( {0,3}(#{1,6}[ \t]+|[-+*][ \t]+)?(?:\*\*|__)?)([\p{Script=Han}\u3040-\u30ff]+)(?:\*\*|__)?([ \t]*[:：](?:\*\*|__)?)?/u;
+const LABEL = /^(\uFEFF? {0,3}(#{1,6}[ \t]+|[-+*][ \t]+)?(?:\*\*|__)?)([\p{Script=Han}\u3040-\u30ff]+)(?:\*\*|__)?([ \t]*[:：](?:\*\*|__)?)?/u;
 
 function japaneseHeading(line: string, nextLine: string) {
   const match = LABEL.exec(line);
@@ -324,10 +344,7 @@ export function processText(text: string, options: ProcessOptions = {}): Process
     // the replies with the most leaks: four distinct words disabled the pass.
     // Names in a citation list (北京市·上海市) are not translation, so they do not
     // count towards the "mostly Han" verdict.
-    const citedHan = [...line.matchAll(CITED_RUN)].reduce(
-      (n, m) => n + (m[0].match(CJK_ALL)?.length ?? 0),
-      0,
-    );
+    const citedHan = citedHanCount(line);
     const cjk = (line.match(CJK_ALL)?.length ?? 0) - citedHan;
     if (cjk >= 8 && cjk / (cjk + (line.match(HANGUL_ALL)?.length ?? 0)) > 0.5) {
       flag("foreign-line", line, "mostly Han line, treated as translation");
@@ -342,16 +359,18 @@ export function processText(text: string, options: ProcessOptions = {}): Process
       const hanPrefix = /^\p{Script=Han}+/u.exec(token)?.[0] ?? "";
       if (hanPrefix && cover(hanPrefix, ZH)) return token;
       const end = at + token.length;
-      if (OPEN.test(original[at - 1] ?? "") && CLOSE.test(original[end] ?? "")) return token;
+      if (WORD_CHAR.test(original[end] ?? "")) return token;
+      // 개항(開港) is a gloss: a Hangul word, then the bracket, then the Han.
+      if (GLOSS_BEFORE.test(original.slice(Math.max(0, at - 2), at)) && CLOSE.test(original[end] ?? "")) return token;
       if (cited(original, at, token.length)) return token;
-      for (const quote of original.matchAll(QUOTED)) {
-        const start = quote.index ?? 0;
-        if (at >= start && end <= start + quote[0].length) return token;
-      }
+      // Only a quotation that reads as Japanese is out of bounds; Korean prose may
+      // quote a Hanja term and still want it read.
+      if (japaneseQuotes(original).some(([start, stop]) => at >= start && end <= stop)) return token;
       const spelled = token.slice(0, reading.source.length);
       if (protect?.(token) || protect?.(reading.source) || protect?.(spelled)) return token;
       if (protect && [...reading.source.matchAll(CJK_RUN)].some(([span]) => protect(span))) return token;
-      distinct.add(reading.reading);
+      // Dictionary word readings are not evidence of a translated passage, so they
+      // do not count towards the translation cap.
       count++;
       return reading.reading + token.slice(reading.source.length);
     });

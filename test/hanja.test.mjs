@@ -27,9 +27,14 @@ test("phonetic fallback leaves unknown words, partial matches, and all-Han words
   assert.deepEqual(sanitize(text), { text: "원문은 연결을 쓰고 調사진, ABC調사, 社조도 표시합니다.", count: 1 });
 });
 
-test("mixed-script phonetic fallback leaves code, links, and quoted wording alone", () => {
-  const text = '예시: `調사`, https://example.test/調사, “調사”, 조사(調사), 調사·연結.';
+test("mixed-script phonetic fallback leaves code, links, glosses, and citations alone", () => {
+  const text = '예시: `調사`, https://example.test/調사, 조사(調사), 調사·연結.';
   assert.deepEqual(sanitize(text), { text, count: 0 });
+});
+
+test("Korean prose may quote a Hanja word and still want it read", () => {
+  assert.equal(sanitize('"調사"라고 했습니다.').text, '"조사"라고 했습니다.');
+  assert.equal(sanitize("「調사」입니다.").text, "「조사」입니다.");
 });
 
 test("a mixed spelling the user explicitly asked about is not rewritten", () => {
